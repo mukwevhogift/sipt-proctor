@@ -48,21 +48,26 @@ export default function FaceEnrollment({ onComplete }: FaceEnrollmentProps) {
     const video = videoRef.current;
     if (!video) return;
 
+    let isProcessing = false;
     const interval = setInterval(async () => {
-      if (video.readyState < 2) return;
-      const detections = await faceapi
-        .detectAllFaces(video, new faceapi.TinyFaceDetectorOptions())
-        .withFaceLandmarks(true);
+      if (video.readyState < 2 || isProcessing) return;
+      isProcessing = true;
+      try {
+        const detections = await faceapi
+          .detectAllFaces(video, new faceapi.TinyFaceDetectorOptions())
+          .withFaceLandmarks(true);
 
-      if (canvasRef.current) {
-        const dims = faceapi.matchDimensions(canvasRef.current, video, true);
-        const resized = faceapi.resizeResults(detections, dims);
-        const ctx = canvasRef.current.getContext('2d');
-        if (ctx) ctx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
-        faceapi.draw.drawDetections(canvasRef.current, resized);
-        faceapi.draw.drawFaceLandmarks(canvasRef.current, resized);
-      }
-    }, 300);
+        if (canvasRef.current) {
+          const dims = faceapi.matchDimensions(canvasRef.current, video, true);
+          const resized = faceapi.resizeResults(detections, dims);
+          const ctx = canvasRef.current.getContext('2d');
+          if (ctx) ctx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
+          faceapi.draw.drawDetections(canvasRef.current, resized);
+          faceapi.draw.drawFaceLandmarks(canvasRef.current, resized);
+        }
+      } catch { /* ignore frame errors */ }
+      finally { isProcessing = false; }
+    }, 500);
 
     return () => clearInterval(interval);
   }, [status]);

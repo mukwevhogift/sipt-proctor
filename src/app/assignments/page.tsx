@@ -55,9 +55,10 @@ export default function AssignmentsPage() {
     e.preventDefault();
     setCreating(true);
     const sb = getSupabase();
-    if (!sb) return;
+    if (!sb) { setCreating(false); return; }
 
     const { data: { user } } = await sb.auth.getUser();
+    if (!user) { setCreating(false); alert('Session expired. Please log in again.'); return; }
     const { data, error } = await sb.from('assignments').insert({
       title,
       description: description || null,
@@ -177,7 +178,7 @@ export default function AssignmentsPage() {
         ) : (
           <div className="space-y-4">
             {assignments.map(a => {
-              const isPastDue = new Date(a.due_date) < new Date();
+              const isPastDue = a.due_date ? new Date(a.due_date) < new Date() : false;
               return (
                 <div
                   key={a.id}
@@ -196,7 +197,7 @@ export default function AssignmentsPage() {
                       {a.description && <p className="text-gray-400 text-sm mb-3">{a.description}</p>}
                       <div className="flex items-center gap-4 text-xs text-gray-500">
                         <span>⏱ {a.time_limit_minutes} min</span>
-                        <span>📅 Due: {format(new Date(a.due_date), 'dd MMM yyyy, HH:mm')}</span>
+                        <span>📅 Due: {a.due_date ? format(new Date(a.due_date), 'dd MMM yyyy, HH:mm') : 'No due date'}</span>
                       </div>
                     </div>
                     {!isPastDue && !isAdmin && (

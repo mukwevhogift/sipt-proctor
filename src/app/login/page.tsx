@@ -36,15 +36,16 @@ export default function LoginPage() {
       if (!profile) {
         // Profile row missing – auto-create from auth metadata
         const meta = authData.user?.user_metadata;
+        const role = meta?.role ?? 'student';
         await sb.from('profiles').upsert({
           id: userId,
           full_name: meta?.full_name ?? '',
           student_number: meta?.student_number ?? null,
-          role: meta?.role ?? 'student',
+          role,
         }, { onConflict: 'id' });
-      }
-
-      if (profile?.role === 'admin') {
+        // Use the role we just wrote (don't re-query, profile was null)
+        if (role === 'admin') destination = '/dashboard';
+      } else if (profile.role === 'admin') {
         destination = '/dashboard';
       }
     }

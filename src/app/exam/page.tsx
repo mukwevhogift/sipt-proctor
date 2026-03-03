@@ -73,14 +73,23 @@ function SIPTExam() {
   const webgazerActive = useRef(false);
   const eyesAwayStart = useRef<number | null>(null);
   const flagsRef = useRef<ProctorFlag[]>([]);
+  const sessionIdRef = useRef('');
+  const submittingRef = useRef(false);
+  const faceProcessingRef = useRef(false);
+  const assignmentTextRef = useRef('');
 
-  // ─── Flag logger with cooldown + toast ────────────────────────────
+  // Keep refs in sync with state
+  useEffect(() => { sessionIdRef.current = sessionId; }, [sessionId]);
+  useEffect(() => { assignmentTextRef.current = assignmentText; }, [assignmentText]);
+
+  // ─── Flag logger with cooldown + toast (uses ref to avoid re-creating monitoring effects) ─
   const logFlag = useCallback(async (type: string, description: string) => {
     const now = Date.now();
     if (lastFlagTime.current[type] && now - lastFlagTime.current[type] < FLAG_COOLDOWN_MS) return;
     lastFlagTime.current[type] = now;
 
-    const flag: ProctorFlag = { session_id: sessionId, timestamp: new Date(), type, description };
+    const sid = sessionIdRef.current;
+    const flag: ProctorFlag = { session_id: sid, timestamp: new Date(), type, description };
     setFlags(prev => { const next = [...prev, flag]; flagsRef.current = next; return next; });
 
     // Toast notification for important flags
@@ -90,16 +99,18 @@ function SIPTExam() {
     }
 
     const sb = getSupabase();
-    if (sb && sessionId) {
+    if (sb && sid) {
       await sb.from('proctor_logs').insert({
-        session_id: sessionId,
+        session_id: sid,
         timestamp: flag.timestamp.toISOString(),
         violation_type: flag.type,
         description: flag.description,
         severity: type.includes('MISMATCH') || type.includes('MULTIPLE') ? 3 : type.includes('PASTE') || type.includes('TAB') ? 2 : 1,
       }).then((res: any) => { if (res.error) console.warn('Log error:', res.error.message); });
     }
-  }, [sessionId]);
+  // logFlag uses refs so it doesn't need sessionId in deps — stable reference
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // ─── 1. Load face-api models (on mount) ──────────────────────────
   useEffect(() => {
@@ -197,6 +208,8 @@ function SIPTExam() {
 
     const intervalId = setInterval(async () => {
       if (!video || video.readyState < 2) return;
+      if (faceProcessingRef.current) return; // prevent stacking on slow devices
+      faceProcessingRef.current = true;
       try {
         const detections = await faceapi
           .detectAllFaces(video, new faceapi.TinyFaceDetectorOptions())
@@ -226,6 +239,8 @@ function SIPTExam() {
         }
       } catch (err) {
         console.warn('Face detection frame error:', err);
+      } finally {
+        faceProcessingRef.current = false;
       }
     }, 1500);
 
@@ -293,8 +308,8 @@ function SIPTExam() {
       logFlag('RIGHT_CLICK', 'Right-click attempted during exam');
     };
     const handleKeyDown = (e: KeyboardEvent) => {
-      // Block Ctrl+C, Ctrl+V, Ctrl+Tab, PrintScreen
-      if (e.ctrlKey && ['c', 'v', 'a', 'Tab'].includes(e.key)) {
+      // Block Ctrl+V, Ctrl+Tab, PrintScreen (allow Ctrl+A and Ctrl+C for editing own work)
+      if (e.ctrlKey && ['v', 'Tab'].includes(e.key)) {
         e.preventDefault();
         logFlag('SHORTCUT_BLOCKED', `Blocked shortcut: Ctrl+${e.key}`);
       }
@@ -365,6 +380,9 @@ function SIPTExam() {
 
     return () => {
       if (recTimerRef.current) clearInterval(recTimerRef.current);
+      if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+        mediaRecorderRef.current.stop();
+      }
     };
   }, [step, webcamReady, sessionId]);
 
@@ -413,6 +431,10 @@ function SIPTExam() {
 
   // ─── Submit & end session ─────────────────────────────────────────
   const handleSubmit = async () => {
+    // Guard against double submit (timer + button race)
+    if (submittingRef.current) return;
+    submittingRef.current = true;
+
     if (timerRef.current) clearInterval(timerRef.current);
     if (faceIntervalRef.current) clearInterval(faceIntervalRef.current);
     if (recTimerRef.current) clearInterval(recTimerRef.current);
@@ -425,9 +447,11 @@ function SIPTExam() {
       document.exitFullscreen?.()?.catch(() => {});
     }
 
-    // Save submission + activity log to Supabase
+    // Save submission + activity log to Supabase (use refs for latest values)
+    const sid = sessionIdRef.current;
+    const text = assignmentTextRef.current;
     const sb = getSupabase();
-    if (sb && sessionId) {
+    if (sb && sid) {
       const activityLog = flagsRef.current.map(f => ({
         type: f.type,
         description: f.description,
@@ -437,13 +461,13 @@ function SIPTExam() {
       await sb.from('exam_sessions').update({
         status: 'submitted',
         ended_at: new Date().toISOString(),
-        submitted_content: assignmentText,
+        submitted_content: text,
         activity_log: activityLog,
         trust_score: trustScore,
-      }).eq('id', sessionId);
+      }).eq('id', sid);
     }
 
-    logFlag('SESSION_END', `Submitted (${assignmentText.length} chars)`);
+    logFlag('SESSION_END', `Submitted (${text.length} chars)`);
     setStep('submitted');
   };
 

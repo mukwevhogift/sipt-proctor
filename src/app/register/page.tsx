@@ -22,11 +22,11 @@ export default function RegisterPage() {
     const sb = getSupabase();
     if (!sb) { setError('Supabase not configured'); setLoading(false); return; }
 
-    // Create auth user
+    // Create auth user (include student_number in metadata for fallback auto-create on login)
     const { data: authData, error: authError } = await sb.auth.signUp({
       email,
       password,
-      options: { data: { full_name: fullName, role: 'student' } },
+      options: { data: { full_name: fullName, student_number: studentNumber, role: 'student' } },
     });
 
     if (authError) {

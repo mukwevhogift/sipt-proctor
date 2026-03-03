@@ -88,14 +88,14 @@ interface LogEntry {
 const CHART_COLORS = ['#ef4444', '#f59e0b', '#22c55e', '#3b82f6', '#a855f7', '#ec4899', '#14b8a6', '#f97316'];
 
 function getTrustColor(score: number | null): string {
-  if (!score) return 'text-gray-400';
+  if (score === null || score === undefined) return 'text-gray-400';
   if (score >= 80) return 'text-green-400';
   if (score >= 50) return 'text-yellow-400';
   return 'text-red-400';
 }
 
 function getTrustBg(score: number | null): string {
-  if (!score) return 'bg-gray-900/50';
+  if (score === null || score === undefined) return 'bg-gray-900/50';
   if (score >= 80) return 'bg-green-900/30';
   if (score >= 50) return 'bg-yellow-900/30';
   return 'bg-red-900/30';
@@ -185,7 +185,7 @@ export default function Dashboard() {
 
   useEffect(() => {
     fetchData();
-    const interval = setInterval(fetchData, 10000);
+    const interval = setInterval(fetchData, 30000);
     return () => clearInterval(interval);
   }, [fetchData]);
 
@@ -196,12 +196,12 @@ export default function Dashboard() {
       (s.student_number ?? '').toLowerCase().includes(searchTerm.toLowerCase()) ||
       s.id.toLowerCase().includes(searchTerm.toLowerCase());
 
-    const score = s.trust_score ?? 100;
+    const score = s.trust_score;
     const matchesFilter =
       scoreFilter === 'all' ? true :
-      scoreFilter === 'high' ? score >= 80 :
-      scoreFilter === 'medium' ? score >= 50 && score < 80 :
-      score < 50;
+      scoreFilter === 'high' ? (score !== null && score >= 80) :
+      scoreFilter === 'medium' ? (score !== null && score >= 50 && score < 80) :
+      (score !== null && score < 50);
 
     return matchesSearch && matchesFilter;
   });
@@ -225,22 +225,24 @@ export default function Dashboard() {
     .sort((a, b) => b.count - a.count)
     .slice(0, 8);
 
-  const trustBuckets = { 'High (80-100)': 0, 'Medium (50-79)': 0, 'Low (0-49)': 0 };
+  const trustBuckets = { 'High (80-100)': 0, 'Medium (50-79)': 0, 'Low (0-49)': 0, 'No Score': 0 };
   for (const s of sessions) {
-    const score = s.trust_score ?? 100;
-    if (score >= 80) trustBuckets['High (80-100)']++;
+    const score = s.trust_score;
+    if (score === null || score === undefined) trustBuckets['No Score']++;
+    else if (score >= 80) trustBuckets['High (80-100)']++;
     else if (score >= 50) trustBuckets['Medium (50-79)']++;
     else trustBuckets['Low (0-49)']++;
   }
-  const trustPieData = Object.entries(trustBuckets).map(([name, value]) => ({ name, value }));
-  const PIE_COLORS = ['#22c55e', '#f59e0b', '#ef4444'];
+  const trustPieData = Object.entries(trustBuckets).filter(([, v]) => v > 0).map(([name, value]) => ({ name, value }));
+  const PIE_COLORS = ['#22c55e', '#f59e0b', '#ef4444', '#6b7280'];
 
   // ─── Stats ────────────────────────────────────────────────────────
   const totalSessions = sessions.length;
-  const avgScore = totalSessions > 0
-    ? Math.round(sessions.reduce((a, b) => a + (b.trust_score ?? 100), 0) / totalSessions)
+  const scoredSessions = sessions.filter(s => s.trust_score !== null && s.trust_score !== undefined);
+  const avgScore = scoredSessions.length > 0
+    ? Math.round(scoredSessions.reduce((a, b) => a + (b.trust_score ?? 0), 0) / scoredSessions.length)
     : 0;
-  const highRiskCount = sessions.filter(s => (s.trust_score ?? 100) < 50).length;
+  const highRiskCount = sessions.filter(s => s.trust_score !== null && s.trust_score < 50).length;
   const activeSessions = sessions.filter(s => s.status === 'in_progress').length;
 
   // ═══════════════════════════════════════════════════════════════════

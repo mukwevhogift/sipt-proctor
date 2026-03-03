@@ -1,5 +1,5 @@
 'use client';
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 
 declare global {
   interface Window {
@@ -24,6 +24,8 @@ export default function CalibrationScreen({ onComplete }: CalibrationScreenProps
   const [clickCount, setClickCount] = useState(0);
   const [webgazerReady, setWebgazerReady] = useState(false);
   const [loading, setLoading] = useState(true);
+  const onCompleteRef = useRef(onComplete);
+  onCompleteRef.current = onComplete;
 
   useEffect(() => {
     // If WebGazer already loaded (from a previous page), reuse it
@@ -62,7 +64,7 @@ export default function CalibrationScreen({ onComplete }: CalibrationScreenProps
       console.warn('WebGazer CDN failed to load');
       setLoading(false);
       // Skip calibration if WebGazer unavailable
-      onComplete();
+      onCompleteRef.current();
     };
 
     document.head.appendChild(script);
@@ -70,7 +72,9 @@ export default function CalibrationScreen({ onComplete }: CalibrationScreenProps
     return () => {
       // Don't end WebGazer here – it's needed for the exam
     };
-  }, [onComplete]);
+  // Use empty deps – onCompleteRef avoids re-running this effect
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const handlePointClick = useCallback(() => {
     const newCount = clickCount + 1;
@@ -78,7 +82,7 @@ export default function CalibrationScreen({ onComplete }: CalibrationScreenProps
     if (newCount >= CLICKS_PER_POINT) {
       if (currentPoint >= CALIBRATION_POINTS.length - 1) {
         // Calibration complete
-        onComplete();
+        onCompleteRef.current();
         return;
       }
       setCurrentPoint(prev => prev + 1);
@@ -86,7 +90,7 @@ export default function CalibrationScreen({ onComplete }: CalibrationScreenProps
     } else {
       setClickCount(newCount);
     }
-  }, [clickCount, currentPoint, onComplete]);
+  }, [clickCount, currentPoint]);
 
   if (loading) {
     return (

@@ -19,13 +19,14 @@ import { NextRequest, NextResponse } from 'next/server';
  */
 export async function POST(req: NextRequest) {
   try {
-    // ── Guard: optional secret to prevent random people from hitting this ──
+    // ── Guard: require secret to prevent unauthorized admin creation ──
     const secret = process.env.ADMIN_SECRET;
-    if (secret) {
-      const provided = req.headers.get('x-admin-secret');
-      if (provided !== secret) {
-        return NextResponse.json({ error: 'Invalid admin secret' }, { status: 401 });
-      }
+    if (!secret) {
+      return NextResponse.json({ error: 'ADMIN_SECRET env var not configured on server' }, { status: 500 });
+    }
+    const provided = req.headers.get('x-admin-secret');
+    if (provided !== secret) {
+      return NextResponse.json({ error: 'Invalid or missing X-Admin-Secret header' }, { status: 401 });
     }
 
     // ── Parse body ──
