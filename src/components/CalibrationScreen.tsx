@@ -81,7 +81,11 @@ export default function CalibrationScreen({ onComplete }: CalibrationScreenProps
 
     if (newCount >= CLICKS_PER_POINT) {
       if (currentPoint >= CALIBRATION_POINTS.length - 1) {
-        // Calibration complete
+        // Calibration complete — hide WebGazer overlay but keep prediction running
+        try {
+          window.webgazer?.showVideoPreview(false);
+          window.webgazer?.showPredictionPoints(false);
+        } catch { /* older builds may not support these */ }
         onCompleteRef.current();
         return;
       }

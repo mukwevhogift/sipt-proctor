@@ -72,6 +72,8 @@ function SIPTExam() {
   const lastFlagTime = useRef<Record<string, number>>({});
   const webgazerActive = useRef(false);
   const eyesAwayStart = useRef<number | null>(null);
+  const gazeAwayTotal = useRef(0);          // cumulative ms spent with gaze off-screen
+  const gazeEdgeStart = useRef<number | null>(null); // when gaze first moved to edge zone
   const flagsRef = useRef<ProctorFlag[]>([]);
   const sessionIdRef = useRef('');
   const submittingRef = useRef(false);
@@ -248,27 +250,94 @@ function SIPTExam() {
     return () => clearInterval(intervalId);
   }, [step, webcamReady, logFlag]);
 
-  // ─── 4. Eye tracking (WebGazer should already be started from calibration)
+  // ─── 4. Eye tracking (WebGazer – resumed from calibration) ────────
   useEffect(() => {
     if (step !== 'exam' || !webcamReady) return;
-    if (!window.webgazer) return;
+    if (!window.webgazer) {
+      console.warn('WebGazer not available — eye tracking disabled for this session');
+      return;
+    }
+
+    // Ensure WebGazer is still running after the calibration→exam transition.
+    // .resume() restarts the prediction loop if it stalled; .begin() is a no-op
+    // if already started, but .resume() is safe to call repeatedly.
+    try {
+      window.webgazer.resume();
+    } catch {
+      // If resume fails, try a fresh begin()
+      try { window.webgazer.begin(); } catch { /* give up silently */ }
+    }
+
+    // Hide WebGazer's built-in camera overlay & prediction dot so they
+    // don't cover the exam UI (our own <video> already shows the camera).
+    try {
+      window.webgazer.showVideoPreview(false).showPredictionPoints(false);
+    } catch { /* older builds may not have these methods */ }
+
+    // --- Gaze thresholds ---
+    const AWAY_CONTINUOUS_MS = 3000;   // flag after 3 s continuous null data
+    const EDGE_CONTINUOUS_MS = 2000;   // flag after 2 s continuous edge gaze
+    const CUMULATIVE_WARN_MS = 20000;  // flag every 20 s cumulative away time
+    const EDGE_PX = 80;               // pixels from screen edge considered "edge"
+    let cumulativeWarnCount = 0;       // how many cumulative warnings given
+
+    const gazeListener = (data: any) => {
+      const now = Date.now();
+
+      // ── Case A: No gaze data (face/eyes not detected) ──────────
+      if (!data) {
+        gazeEdgeStart.current = null;
+        if (!eyesAwayStart.current) eyesAwayStart.current = now;
+        const awayDelta = now - eyesAwayStart.current;
+
+        // Accumulate total away-time
+        gazeAwayTotal.current += 50; // listener fires ~20 fps ≈ 50 ms per tick
+
+        // Continuous away flag
+        if (awayDelta >= AWAY_CONTINUOUS_MS) {
+          logFlag('EYES_AWAY', `Eyes off-screen for ${(awayDelta / 1000).toFixed(1)}s`);
+          eyesAwayStart.current = now; // reset for next continuous window
+        }
+
+        // Cumulative away flag
+        const warnThreshold = (cumulativeWarnCount + 1) * CUMULATIVE_WARN_MS;
+        if (gazeAwayTotal.current >= warnThreshold) {
+          cumulativeWarnCount++;
+          logFlag('GAZE_DISTRACTED', `Total gaze-off time: ${(gazeAwayTotal.current / 1000).toFixed(0)}s`);
+        }
+        return;
+      }
+
+      // ── Case B: Valid gaze data ────────────────────────────────
+      // Reset continuous-away timer but keep cumulative total
+      eyesAwayStart.current = null;
+
+      const { x, y } = data;
+      const w = window.innerWidth;
+      const h = window.innerHeight;
+
+      // Check edges on BOTH axes
+      const atEdge =
+        x < EDGE_PX || x > w - EDGE_PX ||
+        y < EDGE_PX || y > h - EDGE_PX;
+
+      if (atEdge) {
+        if (!gazeEdgeStart.current) gazeEdgeStart.current = now;
+        const edgeDelta = now - gazeEdgeStart.current;
+        if (edgeDelta >= EDGE_CONTINUOUS_MS) {
+          logFlag(
+            'GAZE_SUSPICIOUS',
+            `Gaze at edge for ${(edgeDelta / 1000).toFixed(1)}s (x=${Math.round(x)}, y=${Math.round(y)})`,
+          );
+          gazeEdgeStart.current = now; // reset for next window
+        }
+      } else {
+        gazeEdgeStart.current = null;
+      }
+    };
 
     try {
-      window.webgazer.setGazeListener((data: any) => {
-        if (!data) {
-          if (!eyesAwayStart.current) eyesAwayStart.current = Date.now();
-          if (Date.now() - eyesAwayStart.current > 5000) {
-            logFlag('EYES_AWAY', 'Eyes off-screen for >5 seconds');
-            eyesAwayStart.current = Date.now();
-          }
-        } else {
-          eyesAwayStart.current = null;
-          const { x } = data;
-          if (x < 50 || x > window.innerWidth - 50) {
-            logFlag('GAZE_SUSPICIOUS', `Gaze at extreme edge (x=${Math.round(x)})`);
-          }
-        }
-      });
+      window.webgazer.setGazeListener(gazeListener);
       webgazerActive.current = true;
     } catch (err) {
       console.warn('WebGazer listener error:', err);
@@ -481,7 +550,8 @@ function SIPTExam() {
   const calculateTrustScore = (flagList: ProctorFlag[]) => {
     const deductions: Record<string, number> = {
       FACE_MISSING: 5, MULTIPLE_FACES: 15, IDENTITY_MISMATCH: 25,
-      EYES_AWAY: 3, GAZE_SUSPICIOUS: 2, TAB_SWITCH: 10, WINDOW_BLUR: 8,
+      EYES_AWAY: 3, GAZE_SUSPICIOUS: 2, GAZE_DISTRACTED: 5,
+      TAB_SWITCH: 10, WINDOW_BLUR: 8,
       PASTE_DETECTED: 15, UNNATURAL_TYPING: 10, TYPING_BURST: 8,
       FULLSCREEN_EXIT: 5, RIGHT_CLICK: 3, SHORTCUT_BLOCKED: 5,
       SCREENSHOT_ATTEMPT: 10, ALT_TAB: 8,
